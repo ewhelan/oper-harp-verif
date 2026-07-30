@@ -16,6 +16,110 @@ suppressPackageStartupMessages({
 })
 
 #================================================#
+# MERGING AND LOAD YAML FILES
+#================================================#
+
+merge_yaml <- function(base, override) {
+  
+  for (nm in names(override)) {
+    
+    if (
+      nm %in% names(base) &&
+      is.list(base[[nm]]) &&
+      is.list(override[[nm]])
+    ) {
+      base[[nm]] <- merge_yaml(base[[nm]], override[[nm]])
+    } else {
+      base[[nm]] <- override[[nm]]
+    }
+  }
+  
+  return(base)
+}
+
+load_config <- function(path) {
+  
+  cfg <- yaml::read_yaml(path)
+  
+  if (!is.null(cfg$inherits)) {
+    
+    parent <- load_config(file.path(dirname(path),cfg$inherits))
+    
+    cfg$inherits <- NULL
+    
+    cfg <- merge_yaml(parent, cfg)
+  }
+  
+  return(cfg)
+  
+}
+
+#================================================#
+# PARSE INPUT params_list INTO A SET OF PARAMETERS
+# BASED ON params
+#================================================#
+
+parse_input_params <- function(params_list,params) {
+  # Get rid of whitespace and split into parameters
+  params_list <- stringr::str_split_1(gsub(" ","",params_list),",") %>% unique()
+  # Allow for single UA levels by splitting params_list into standard (i.e. 
+  # appearing explicitly in set_params file) and other parts
+  params_list_standard  <- params_list[params_list %in% names(params)]
+  params_list_UA_levels <- setdiff(params_list,params_list_standard)
+  # First get the standard params
+  params_orig <- params
+  params      <- params[params_list_standard]
+  # Remove empty entries
+  params      <- params[lapply(params,length) > 0]
+  # Save the first parameter found to use with create_station_filter
+  if (length(names(params)) > 0) {
+    param_csf <- names(params)[1]
+  } else {
+    param_csf <- NULL
+  }
+  
+  # Then handle single UA_levels e.g. T925
+  if (length(params_list_UA_levels) > 0) {
+    for (ual in params_list_UA_levels) {
+      # Strip trailing level from ual
+      uav <- gsub('[0-9]+$','',ual)
+      # Does the corresponding UA variable exist in the params file?
+      if (uav %in% names(params_orig)) {
+        param_ual <- params_orig[uav]
+        names(param_ual) <- ual
+        # Remove vc if it exists
+        if (!is.null(param_ual[[ual]][["vc"]])) {
+          param_ual[[ual]][["vc"]] <- NULL
+        }
+        params <- c(params,param_ual)
+        # If param_csf is not set, do so here (to the uav value!)
+        if (is.null(param_csf)) {
+          param_csf <- uav
+        }
+      } else {
+        cat("Did not find any match for",ual,"in the parameter file\n")
+      }
+    }
+  }
+  # Check that all entries are unique
+  if ((length(names(params))) != (length(unique(names(params))))) {
+    stop("There are repeated entries in params - why did this happen?")
+  }
+  
+  # Remove empty entries
+  params      <- params[lapply(params,length) > 0]
+  if (length(params) == 0) {
+    cat("Could not find any of the parameters:",
+        paste(params_list,collapse = ","),"\n")
+    stop("No parameters found!")
+  } else {
+    cat("Running for parameter(s):",paste(names(params),collapse = ","),"\n")
+  }
+  return(list("params"    = params,
+              "param_csf" = param_csf))
+}
+
+#================================================#
 # SILENT STOP WHEN RUNNING USING Rscript
 # WHEN IN RSTUDIO, DEFAULT BACK TO STOP TO AVOID
 # TERMINATING THE SESSION
@@ -89,11 +193,16 @@ check_config_input <- function(config,x,y,default="None",z=NULL) {
   
   if (is.null(val)) {
     cat("Could not find",x,":",y,"in the config\n")
-    if (default == "None") {
-      stop("No default value set for ",y,", aborting")
+    if (is.null(default)) {
+      cat("Setting",y,"= NULL\n")
+      val <- NULL
     } else {
-      cat("Setting",y,"=",default[[1]],"\n")
-      val <- default
+      if (default == "None") {
+        stop("No default value set for ",y,", aborting")
+      } else {
+        cat("Setting",y,"=",default[[1]],"\n")
+        val <- default
+      }
     }
   }
   
@@ -122,7 +231,8 @@ check_dirs_exist <- function(dir_vec) {
 
 get_named_list <- function(input_str,
                            fcst_model,
-                           str_descrip){
+                           str_descrip,
+                           skip_parse = FALSE){
   
   input_str <- as.list(input_str)
   if (length(input_str) == 1) {
@@ -137,7 +247,7 @@ get_named_list <- function(input_str,
   for (ii in seq(1,length(input_str),1)) {
     if (!is.null(input_str[[ii]])) {
       # Deal with case where lags is specified as "0h" etc, not in c() format
-      if ((any(input_str[[ii]] %in% paste0(seq(0,23),"h"))) || (str_descrip == "file_template")) {
+      if ((any(input_str[[ii]] %in% paste0(seq(0,23),"h"))) || (skip_parse)) {
         out[[ii]] <- input_str[[ii]]
       } else {
         out[[ii]] <- eval(parse(text = input_str[[ii]]))
@@ -993,6 +1103,26 @@ try_rpforecast <- function(start_date,
 
 scale_fcst <- function(fcst,prm_info) {
   
+  if (!is.null(prm_info$scale_fcst_specific)) {
+    if (is.null(prm_info$scale_fcst_rest)) {
+      stop("You need to use scale_fcst_rest with scale_fcst_specific!")
+    }
+    prm_info$scale_fcst <- prm_info$scale_fcst_specific
+    rest_models <- setdiff(names(fcst),
+                           names(prm_info$scale_fcst_specific))
+    for (aa in rest_models) {
+      prm_info$scale_fcst[[aa]] <- prm_info$scale_fcst_rest
+    }
+    models_to_scale <- names(fcst)
+  } else {
+    models_to_scale <- NULL
+  }
+  
+  if (!is.null(models_to_scale)) {
+    cat("Overwrite models_to_scale with",models_to_scale,"when forecast scaling\n")
+    prm_info$models_to_scale <- models_to_scale
+  }
+  
   if (!is.null(prm_info$scale_fcst)) {
     # Check if we need to scale models differently for this parameter
     if (is.null(prm_info$models_to_scale)) {
@@ -1232,7 +1362,21 @@ fcst_qc <- function(fcst,
                     param,
                     param_info,
                     vc,
-                    num_days){
+                    num_days,
+                    model_as_obs,
+                    skip_qc = FALSE){
+  
+  if (skip_qc) {
+    cat("Skipping the obs quality control checks as skip_qc is activated!\n")
+    return(fcst)
+  }
+  
+  # If using model analysis as observations, there is no need to run the
+  # forecast quality control checks
+  if (!isFALSE(model_as_obs)) {
+    cat("Skipping the obs quality control checks as you are using model analyses as observations!\n")
+    return(fcst)
+  }
   
   # Check that data exists for all models
   min_rows <- nrow(fcst[[1]])

@@ -21,12 +21,14 @@ Create a configuration file for your project using the structure provided in the
 | verif | ua_restrict_vh | For upper air variables, do you want to restrict to valid hours 00, 06, 12, and 18Z? Either TRUE (default) or FALSE. | ua_restrict_vh: TRUE |
 | verif | force_valid_thr | Set to TRUE if you really want threshold scores over valid times/hours. FALSE is generally sufficient. | force_valid_thr: FALSE |
 | verif | lt_split | Set to TRUE if you want to split the auxiliary scores (e.g. scatterplots) into "short" (<=24) and "long" (>24) leadtime ranges. Results using all leadtimes will always be generated | lt_split: FALSE |
+| verif | skip_qc | Skip all quality control checks on observations and forecasts. Useful for debugging. Default is FALSE i.e. run the quality control checks. | skip_qc: FALSE |
 | verif | fcst_path    | Path to the forecast sqlite tables generated from the vfld. | fcst_path: "/path/to/FCTABLE" |
 | verif | obs_path     | Path to the observation sqlite tables generated from the vobs. | obs_path: "/path/to/OBSTBALE" |
 | verif | verif_path   | A root directory where the rds verification files are stored. For a given project, these rds files will be located in `verif:verif_path`/`verif:project_name`. | verif_path: "/path/to/rds" |
-| verif | model_as_obs | An extra set of options which indicates that you want to use a forecast model analysis as observations. This will read lead time=0 forecasts from the sqlite. An extra set of options are nested from `model_as_obs`, see example and options below | model_as_obs: <br>  model_as_obs_name: X <br>  model_as_obs_path: X <br>  model_as_obs_tmpl: X |
+| verif | model_as_obs | An extra set of options which indicates that you want to use a forecast model analysis as observations. This will read lead time=0 forecasts from the sqlite. An extra set of options are nested from `model_as_obs`, see example and options below | model_as_obs: <br>  model_as_obs_name: X <br>  model_as_obs_path: X <br>  model_as_obs_by: X <br>  model_as_obs_tmpl: X |
 | verif$model_as_obs | model_as_obs_name | The name of the forecast model to read as observations | model_as_obs_name: model_A |
 | verif$model_as_obs | model_as_obs_path | The path to the forecast database to read as observations | model_as_obs_path: "/path/to/FCTABLE" |
+| verif$model_as_obs | model_as_obs_by | The frequency interval to read the forecast database. Defaults to "1h". Not all analysis files are required to exist. | model_as_obs_by: "3h" |
 | verif$model_as_obs | model_as_obs_tmpl | The file template to use for the forcast database to read as observations | model_as_obs_tmpl: "fctable" | 
 | pre   | fcst_model   | Carry out the vfld to sqlite conversion for these forecast models. Note that this can differ from `verif:fcst_model` (e.g. the sqlite tables may already exist for some models, and you may want to skip regenerating these). | fcst_model: <br> - model_A  <br> - model_B | 
 | pre   | lead_time    | Which lead times to use when converting the vfld. Can differ from `verif:lead_time`. | lead_time: seq(0,48,1) |
@@ -61,3 +63,19 @@ Create a configuration file for your project using the structure provided in the
 | scorecards | parallel    | Use parallel processing when performing the bootstrapping. | parallel: FALSE | 
 | scorecards | num_cores   | Number of cores to use if `parallel=TRUE`. | num_cores: 1 |
 | scorecards | plot_signif | As well as the scorecard, plot the actual score difference as a function of leadtime for each parameter and score (provided that `scorecards:create_scrd` is TRUE). Statistical significance of the score difference is also indicated. Uses `fn_plot_signif_diff.R`. | plot_signif: TRUE | 
+
+## Avoiding config file duplication!
+
+These config files can obviously get quite long given the large number of options available (both required and optional). Frequently you will just want to change one or two options in a configuration file, and as such duplication of all of the other options is a pain. A convenient way of handling this is to use an "experiment" config file, just containing the options you want to change, which references a "base" config file which contains all of the options. If an option is not defined in your "experiment" config file, it will be inherited from the value set in the "base" config file. You can do this by using the `inherits` option as below:
+
+```
+$ cat experiment_config.yml
+inherits: "base_config.yml"
+verif:
+  project_name: "new_project_name"
+  fcst_model:
+    - old_model
+    - new_model
+```
+
+Note that the config file pointed to by `inherits` should exist in directory `config_files`.

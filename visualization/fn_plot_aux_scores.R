@@ -24,12 +24,24 @@ fn_plot_aux_scores <- function(fcst_input,
                                     plot_fd = FALSE,
                                     plot_scat = TRUE,
                                     use_parallel = FALSE,
+                                    clim_name = NULL,
+                                    clim_in_plots = FALSE,
+                                    vc = NA_character_,
                                     fsd = NA_character_,
                                     fed = NA_character_){
   
   #=================================================#
   # INITIAL CHECKS 
   #=================================================#
+  
+  if (!is.na(vc)) {
+    if (is.null(clim_name)) {
+      cat("Skipping fn_plot_aux_scores for this UA parameter\n")
+      return()
+    } else {
+      cat("Running fn_plot_aux_scores for this UA parameter as climatology was found!\n")
+    }
+  }
   
   if (!is.list(fcst_input)) {
     stop("Aux scores plotting: A harp forecast object is required, aborting")
@@ -91,6 +103,12 @@ fn_plot_aux_scores <- function(fcst_input,
   if (!(station_group_var %in% fcst_names)) {
     fcst <- harpPoint::mutate_list(fcst,"{station_group_var}" := "All")
   }
+  # If valid_ymd exists, use this as the grouping variable
+  if ("valid_ymd" %in% fcst_names) {
+    valid_dttm_col <- "valid_ymd"
+  } else {
+    valid_dttm_col <- "valid_dttm"
+  }
   
   # Useful variables
   param    <- unique(fcst[["parameter"]])
@@ -138,8 +156,10 @@ fn_plot_aux_scores <- function(fcst_input,
   #=================================================#
   
   lt_to_use   <- seq(3,48,3) # What lead_times to use (hours)?
-  if (attr(fcst_input,"lt_unit") != "h") {
-    stop("Lead time generalisation required - raise an issue!")
+  if (!is.null(attr(fcst_input,"lt_unit"))){
+    if (attr(fcst_input,"lt_unit") != "h") {
+      stop("Lead time generalisation required - raise an issue!")
+    }
   }
   all_lts     <- sort(unique(fcst[["lead_time"]]))
   lt_to_use   <- intersect(all_lts,lt_to_use)
@@ -159,6 +179,12 @@ fn_plot_aux_scores <- function(fcst_input,
                             "lt_long"  = lt_to_use_long)
   } else {
     lt_to_use_list  <- list("lt_all" = lt_to_use)
+  }
+  # If climatology exists, use all lead times for forecast activity
+  if (!is.null(clim_name)) {
+    if (!(all(all_lts %in% lt_to_use))) {
+      lt_to_use_list  <- c(lt_to_use_list,list("lt_clm" = all_lts))
+    }
   }
   cycles_oi   <- c("All","00","12") # What cycles to plot for?
   if (rolling_verif) {
@@ -377,7 +403,46 @@ fn_plot_aux_scores <- function(fcst_input,
       # Split by fcst_type
       if (fcst_type == "det") {
         
+        if (!is.null(clim_name)) {
+          
+          # Compute NFA if you are using all leadtimes possible
+          if (all(all_lts %in% leadtimes)) {
+            # Compute normalised forecast activity
+            vroption_list$score   <- "nfa"
+            vroption_list$xgroup  <- "lead_time"
+            vroption_list$lt_used <- "NA"
+            vroption_list$xg_str  <- "lt"
+            p <- fn_nfa(cc_fcst,
+                        title_str,
+                        subtitle_str,
+                        fxoption_list,
+                        vroption_list,
+                        clim_name,
+                        vc = vc)
+            p_list <- c(p_list,p)
+            # Reset
+            vroption_list$score   <- "score"
+            vroption_list$xgroup  <- "xgroup"
+            vroption_list$lt_used <- lt_used
+            vroption_list$xg_str  <- "xg_str"
+            
+            # Skip the rest of the below, no need to run for this set of leadtimes
+            # However if we are on the first leadtime loop, then continue to below!
+            # (case when all_lts are in lt_to_use)
+            if (jj > 1) {
+              next
+            }
+          }
+          
+          # Remove climatology from plots if specified
+          if (!clim_in_plots) {
+            cc_fcst <- cc_fcst %>% dplyr::filter(fcst_model != clim_name)
+          }
+          
+        }
+        
         # All aux scores
+        if (is.na(vc)) {
         p <- fn_aux(cc_fcst,
                title_str,
                subtitle_str,
@@ -388,9 +453,11 @@ fn_plot_aux_scores <- function(fcst_input,
                plot_scat = plot_scat,
                use_parallel = use_parallel)
         p_list <- c(p_list,p)
+        }
           
       } else if (fcst_type == "ens") {
         
+        if (is.na(vc)){
         # Compute scores for the ensemble mean
         cc_fcst_mean <- cc_fcst %>% dplyr::filter(member == "mean")
         c_title_str  <- paste0("Ensemble mean : ",title_str)
@@ -437,9 +504,9 @@ fn_plot_aux_scores <- function(fcst_input,
                      use_parallel = use_parallel)
           p_list <- c(p_list,p)
           
-          group_vars           <- c("fcst_model","valid_dttm","member")
+          group_vars           <- c("fcst_model",valid_dttm_col,"member")
           vroption_list$score  <- "mbrtimeseries"
-          vroption_list$xgroup <- "valid_dttm"
+          vroption_list$xgroup <- valid_dttm_col
           vroption_list$xg_str <- "vd"
           p <- fn_dvar_ts(cc_fcst,
                      group_vars,
@@ -462,6 +529,7 @@ fn_plot_aux_scores <- function(fcst_input,
           }
           
         }
+        } # vc check
         
       } # Det/eps
         
