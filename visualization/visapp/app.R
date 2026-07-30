@@ -307,6 +307,9 @@ all_ens_ssum_scores      <- list("Spread Skill"              = paste0("rmse",sco
                                  "Spread Skill Ratio"        = "spread_skill_ratio-lt",
                                  "CRPS"                      = "crps-lt",
                                  "Spread"                    = "spread-lt",
+                                 "RMSE"                      = "rmse-lt",
+                                 "MAE"                       = "mae-lt",
+                                 "STDV"                      = "stde-lt",
                                  "Fair CRPS"                 = "fair_crps-lt",
                                  "Member Bias"               = "mbrbias-lt",
                                  "Member RMSE"               = "mbrrmse-lt",
@@ -320,20 +323,27 @@ all_ens_ssum_scores      <- list("Spread Skill"              = paste0("rmse",sco
                                  "Mean Frequency Dist"       = "freqdist-NA",
                                  "Mean Frequency Hist"       = "freqhist-cls",
                                  "Mean Frequency Bias"       = "freq_bias-cls",
-                                 "Mean Scatterplot"          = "scatterplot-NA"
+                                 "Mean Scatterplot"          = "scatterplot-NA",
+                                 "Mean Q-Q"                  = "quant-qobs",
+                                 "Mean Q-Q diff"             = "qdiff-qobs"
 )
 
 # Ensemble control member
 all_ensctrl_ssum_scores  <- list("Bias RMSE"            = paste0("bias",score_sep,"rmse-lt"),
                                  "Bias STDV"            = paste0("bias",score_sep,"stde-lt"),
                                  "Bias MAE"             = paste0("bias",score_sep,"mae-lt"),
+                                 "RMSE"                 = "rmse-lt",
+                                 "MAE"                  = "mae-lt",
+                                 "STDV"                 = "stde-lt",
                                  "DailyVar"             = "dailyvar-vh",
                                  "Forecast Timeseries"  = "timeseries-vd",
                                  "Bias STDV Timeseries" = paste0("bias",score_sep,"stde-vd"),
                                  "Frequency Dist"       = "freqdist-NA",
                                  "Frequency Hist"       = "freqhist-cls",
                                  "Frequency Bias"       = "freq_bias-cls",
-                                 "Scatterplot"          = "scatterplot-NA"
+                                 "Scatterplot"          = "scatterplot-NA",
+                                 "Q-Q"                  = "quant-qobs",
+                                 "Q-Q diff"             = "qdiff-qobs"
 )
 all_ensctrl_ssum_scores  <- lapply(all_ensctrl_ssum_scores,function(x) paste0("ctrl",x))
 
@@ -341,6 +351,9 @@ all_ensctrl_ssum_scores  <- lapply(all_ensctrl_ssum_scores,function(x) paste0("c
 all_det_ssum_scores      <- list("Bias RMSE"            = paste0("bias",score_sep,"rmse-lt"),
                                  "Bias STDV"            = paste0("bias",score_sep,"stde-lt"),
                                  "Bias MAE"             = paste0("bias",score_sep,"mae-lt"),
+                                 "RMSE"                 = "rmse-lt",
+                                 "MAE"                  = "mae-lt",
+                                 "STDV"                 = "stde-lt",
                                  "DailyVar"             = "dailyvar-vh",
                                  "Forecast Timeseries"  = "timeseries-vd",
                                  "Bias STDV Timeseries" = paste0("bias",score_sep,"stde-vd"),
@@ -348,7 +361,11 @@ all_det_ssum_scores      <- list("Bias RMSE"            = paste0("bias",score_se
                                  "Frequency Hist"       = "freqhist-cls",
                                  "Frequency Heatmap"    = "2dfreqhist-cls",
                                  "Frequency Bias"       = "freq_bias-cls",
-                                 "Scatterplot"          = "scatterplot-NA"
+                                 "Scatterplot"          = "scatterplot-NA",
+                                 "Q-Q"                  = "quant-qobs",
+                                 "Q-Q diff"             = "qdiff-qobs",
+                                 "NFA"                  = "nfa-lt",
+                                 "MSSS"                 = "msss-lt"
 )
 # Add SCAT scores
 all_scat_ssum_scores_2b  <- list("HY-2B Bias RMSE"      = paste0("SCAThy2bbias",score_sep,"rmse-lt"),
@@ -417,13 +434,24 @@ all_det_map_scores       <- c(all_det_map_scores,all_scat_map_scores_2b,
 
 # Upper air scores
 # Leadtime pressure levels
-all_ens_pl_scores        <- list("Mean Bias RMSE" = paste0("mean_bias",score_sep,"rmse"))
+all_ens_pl_scores        <- list("Mean Bias RMSE" = paste0("mean_bias",score_sep,"rmse"),
+                                 "RMSE"           = "rmse",
+                                 "MAE"            = "mae",
+                                 "STDV"           = "stde")
 all_ens_pl_scores        <- lapply(all_ens_pl_scores,function(x) paste0(x,"-lt"))
 
-all_ensctrl_pl_scores    <- list("Bias RMSE" = paste0("bias",score_sep,"rmse"))
+all_ensctrl_pl_scores    <- list("Bias RMSE" = paste0("bias",score_sep,"rmse"),
+                                 "RMSE"      = "rmse",
+                                 "MAE"       = "mae",
+                                 "STDV"      = "stde")
 all_ensctrl_pl_scores    <- lapply(all_ensctrl_pl_scores,function(x) paste0("ctrl",x,"-lt"))
 
-all_det_pl_scores        <- list("Bias RMSE" = paste0("bias",score_sep,"rmse"))
+all_det_pl_scores        <- list("Bias RMSE" = paste0("bias",score_sep,"rmse"),
+                                 "RMSE"      = "rmse",
+                                 "MAE"       = "mae",
+                                 "STDV"      = "stde",
+                                 "NFA"       = "nfa",
+                                 "MSSS"      = "msss")
 all_det_pl_scores        <- lapply(all_det_pl_scores,function(x) paste0(x,"-lt"))
 # Add obsfreq
 add_det_pl_scores        <- list("Obs. Frequency" = "obsfreq-mp")
@@ -436,17 +464,26 @@ all_ens_prof_scores      <- list("Mean Bias RMSE" = paste0("mean_bias",score_sep
                                  "Spread Skill"   = paste0("rmse",score_sep,"spread"),
                                  "CRPS"           = "crps",
                                  "Spread"         = "spread",
+                                 "RMSE"           = "rmse",
+                                 "MAE"            = "mae",
+                                 "STDV"           = "stde",
                                  "Fair CRPS"      = "fair_crps")
 all_ens_prof_scores      <- lapply(all_ens_prof_scores,function(x) paste0(x,"-pr"))
 
 # Ensemble control member
 all_ensctrl_prof_scores  <- list("Bias RMSE" = paste0("bias",score_sep,"rmse"),
-                                 "Bias STDV" = paste0("bias",score_sep,"stde"))
+                                 "Bias STDV" = paste0("bias",score_sep,"stde"),
+                                 "RMSE"      = "rmse",
+                                 "MAE"       = "mae",
+                                 "STDV"      = "stde")
 all_ensctrl_prof_scores  <- lapply(all_ensctrl_prof_scores,function(x) paste0("ctrl",x,"-pr"))
 
 # Deterministic experiment 
 all_det_prof_scores      <- list("Bias RMSE" = paste0("bias",score_sep,"rmse"),
-                                 "Bias STDV" = paste0("bias",score_sep,"stde"))
+                                 "Bias STDV" = paste0("bias",score_sep,"stde"),
+                                 "RMSE"      = "rmse",
+                                 "MAE"       = "mae",
+                                 "STDV"      = "stde")
 all_det_prof_scores      <- lapply(all_det_prof_scores,function(x) paste0(x,"-pr"))
 # Add UAC scores
 all_det_prof_UACscores   <- list("Drift corrected Bias RMSE" = paste0("UACbias",score_sep,"rmse"),
@@ -464,6 +501,8 @@ all_det_prof_scores      <- c(all_det_prof_scores,all_lhmaps_ssum_scores)
 # Ensemble score diffs
 all_ens_sdiffs_scores <- list("Mean Bias"    = "mean_bias-lt",
                               "RMSE"         = "rmse-lt",
+                              "MAE"          = "mae-lt",
+                              "STDV"         = "stde-lt",
                               "Spread"       = "spread-lt",
                               "CRPS"         = "crps-lt",
                               "Fair CRPS"    = "fair_crps-lt")
@@ -1331,13 +1370,13 @@ server <- function(input, output, session) {
       switch(input$surfacetype,
              "Summary" = "Threshold",
              "Skill"   = "Threshold",
-             "Map"     = "Threshold",
+             "Map"     = "Lead time",
              "Signif"  = "Ref model")
     } else if (input$vartype == ua_tab_name){
       switch(input$temptype,
              "Summary" = "Threshold",
              "Prof"    = "Threshold",
-             "Map"     = "Threshold",
+             "Map"     = "Lead time",
              "Signif"  = "Ref model")
     } else if (input$vartype == sc_tab_name){
       "Ref model"

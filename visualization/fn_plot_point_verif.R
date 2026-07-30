@@ -8,6 +8,7 @@
 
 fn_plot_point_verif <- function(harp_verif_input,
                                      png_archive,
+                                     valid_dttm_col = "valid_dttm",
                                      plot_num_cases = TRUE,
                                      cmap = "Set2",
                                      map_cbar_d = FALSE,
@@ -19,8 +20,11 @@ fn_plot_point_verif <- function(harp_verif_input,
                                      fed = NA_character_,
                                      fylims = NULL,
                                      plevel_filter = TRUE,
+                                     pr_validh = c("00","12"),
                                      n_stations = NULL,
                                      use_parallel = FALSE,
+                                     cyc_summary = c("00","12","All"),
+                                     clim_name = NULL,
                                      plot_num_obs = FALSE,
                                      fcst = NULL){
  
@@ -94,7 +98,8 @@ fn_plot_point_verif <- function(harp_verif_input,
     # Scores as a fn of lead_time
     scores_lt  <- c(paste0("bias",score_sep,"rmse"),
                     paste0("bias",score_sep,"stde"),
-                    paste0("bias",score_sep,"mae"))
+                    paste0("bias",score_sep,"mae"),
+                    "rmse")
 
     # Scores as a fn of valid_dttm
     scores_vd  <- c(paste0("bias",score_sep,"stde"))
@@ -127,7 +132,7 @@ fn_plot_point_verif <- function(harp_verif_input,
     # summary
     # threshold scores as fn of lead_time
     # threshold scores as fn of threshold)
-    cycles_summary      <- c("00","12","All")
+    cycles_summary      <- cyc_summary
     cycles_threshold_lt <- c("All")
     cycles_threshold_th <- c("00","12","All")
     
@@ -135,10 +140,12 @@ fn_plot_point_verif <- function(harp_verif_input,
     
     # START OF UA SCORES
     # Scores as a fn of lead_time
-    p_scores_lt <- c(paste0("bias",score_sep,"rmse"))
+    p_scores_lt <- c(paste0("bias",score_sep,"rmse"),
+                     "rmse")
     
     # Profile scores
-    p_scores_pr <- c(paste0("bias",score_sep,"stde"))
+    p_scores_pr <- c(paste0("bias",score_sep,"stde"),
+                     "rmse")
     
     # END OF UA SCORES
     
@@ -156,13 +163,18 @@ fn_plot_point_verif <- function(harp_verif_input,
     # data does not exist in the verif object, it will be skipped
     
     xgroups    <- c("lead_time",
-                    "valid_dttm",
+                    valid_dttm_col,
                     "threshold_val",
                     "SID",
                     "p_leadtime",
                     "p_prof")
     if (rolling_verif) {
-      xgroups  <- c("lead_time","valid_dttm","SID")
+      xgroups  <- c("lead_time",valid_dttm_col,"SID")
+    }
+    
+    if (!is.null(clim_name)) {
+      scores_lt   <- c(scores_lt,"msss")
+      p_scores_lt <- c(p_scores_lt,"msss")
     }
 
     # EPS EXPERIMENT
@@ -242,7 +254,7 @@ fn_plot_point_verif <- function(harp_verif_input,
     # summary
     # threshold scores as fn of lead_time
     # threshold scores as fn of threshold
-    cycles_summary      <- c("00","12","All")
+    cycles_summary      <- cyc_summary
     cycles_threshold_lt <- c("All")
     cycles_threshold_th <- c("00","12","All")
     
@@ -269,14 +281,14 @@ fn_plot_point_verif <- function(harp_verif_input,
     
     # What groups are considered? (see description in "det" section above) 
     xgroups    <- c("lead_time",
-                    "valid_dttm",
+                    valid_dttm_col,
                     "threshold_val",
                     "SID",
                     "other",
                     "p_leadtime",
                     "p_prof")
     if (rolling_verif) {
-      xgroups  <- c("lead_time","valid_dttm","SID")
+      xgroups  <- c("lead_time",valid_dttm_col,"SID")
     }
 
   }
@@ -419,7 +431,8 @@ fn_plot_point_verif <- function(harp_verif_input,
                         "png_projname" = png_projname,
                         "score_sep"    = score_sep, 
                         "comp_val"     = attributes(verif)$comp_val,
-                        "thr_brks"     = attributes(verif)$thr_brks)
+                        "thr_brks"     = attributes(verif)$thr_brks,
+                        "clim_name"    = clim_name)
   
   #=====================================================#
   # NOW DO THE PLOTTING
@@ -448,7 +461,7 @@ fn_plot_point_verif <- function(harp_verif_input,
     if (xgroup == "lead_time") {
       xg_str <- "lt"
       scores <- scores_lt
-    } else if (xgroup == "valid_dttm") {
+    } else if (xgroup %in% c("valid_dttm","valid_ymd")) {
       xg_str <- "vd"
       scores <- scores_vd
     } else if (xgroup == "valid_hour") {
@@ -515,7 +528,7 @@ fn_plot_point_verif <- function(harp_verif_input,
       # when multiple xgroups are available. Not relevant for UA variables
       # as fcst_cycle is not a grouping variable.
       # This ensures that values relevant to this xgroup are used
-      if ((xgroup %in% c("lead_time","valid_hour","valid_dttm","threshold_val")) &
+      if ((xgroup %in% c("lead_time","valid_hour","valid_dttm","valid_ymd","threshold_val")) &
           (xgroup %in% cnames)) {
         c_ver          <- c_ver %>% dplyr::filter(get(xgroup) != "All")
       }
@@ -569,6 +582,14 @@ fn_plot_point_verif <- function(harp_verif_input,
       }
       station_group_var <- tmp_out$station_group_var
       rm(tmp_out)
+      
+      # If plotting skill scores with climatology, remove the climatology!
+      if (!is.null(clim_name)) {
+        if (score %in% c("msss")) {
+          verif <- verif %>% 
+            harpPoint::filter_list(fcst_model != clim_name)
+        }
+      }
       
       for (cycle in cycles) {
         
@@ -634,13 +655,13 @@ fn_plot_point_verif <- function(harp_verif_input,
               next
             }
           }
+          # Handle valid_dttm and only plot 3 hourly data
           if (("valid_dttm" %in% names(verif_II[[1]])) &
               (xgroup == "valid_dttm")) {
             verif_II <- verif_II %>%
               harpPoint::mutate_list(valid_dttm = harpCore::as_dttm(gsub("-| |:|UTC",
                                                                          "",
                                                                          valid_dttm)))
-            # Only plot 3 hourly data
             avddtm   <- harpCore::unique_valid_dttm(verif_II[[1]])
             exddtm   <- harpCore::as_dttm(harpCore::seq_dttm(avddtm[1],
                                                              tail(avddtm,1),
@@ -648,6 +669,14 @@ fn_plot_point_verif <- function(harp_verif_input,
             verif_II <- verif_II %>%
               harpPoint::filter_list(valid_dttm %in% exddtm)
             
+          }
+          # And something similar for valid_ymd
+          if (("valid_ymd" %in% names(verif_II[[1]])) &
+              (xgroup == "valid_ymd")) {
+            verif_II <- verif_II %>%
+              harpPoint::mutate_list(valid_ymd = harpCore::as_dttm(gsub("-| |:|UTC",
+                                                                        "",
+                                                                        valid_ymd)))
           }
 
           # Don't use attributes(stations) as this contains all stations, 
@@ -668,7 +697,7 @@ fn_plot_point_verif <- function(harp_verif_input,
             subtitle_str <- paste0(station," stations (",num_stations,") : ",cy_str)
           }
           # Add in lead times used for valid_dttm
-          if ((xgroup %in% c("valid_dttm")) & (!is.null(alta))) {
+          if ((xgroup %in% c("valid_dttm","valid_ymd")) & (!is.null(alta))) {
             subtitle_str <- paste0(subtitle_str,": +",lt_used_fig)
           }
 
@@ -692,7 +721,7 @@ fn_plot_point_verif <- function(harp_verif_input,
                 filter_col  <- "lead_time"
                 verif_III   <- verif_II %>%
                   harpPoint::filter_list(valid_hour == "All",
-                                         valid_dttm == "All")
+                                         !!sym(valid_dttm_col) == "All")
               } else if (xgroup == "lead_time") {
                 loop_values <- threshold_vals
                 filter_col  <- "threshold_val"
@@ -700,7 +729,7 @@ fn_plot_point_verif <- function(harp_verif_input,
                 verif_III   <- harpPoint::filter_list(verif_II,
                                                       lead_time != "All",
                                                       valid_hour == "All",
-                                                      valid_dttm == "All") 
+                                                      !!sym(valid_dttm_col) == "All") 
               } 
               for (ii in loop_values) {
                 verif_IIII <- harpPoint::filter_list(verif_III,
@@ -804,6 +833,12 @@ fn_plot_point_verif <- function(harp_verif_input,
                                                            valid_dttm == "All")
                     }
                   }
+                  if ("valid_ymd" %in% names(verif_III[[c_tstr]])) {
+                    if ("All" %in% unique(verif_III[[c_tstr]][["valid_ymd"]])){
+                      verif_III[[c_tstr]] <- dplyr::filter(verif_III[[c_tstr]],
+                                                           valid_ymd == "All")
+                    }
+                  }
                 }
               }
               
@@ -852,7 +887,7 @@ fn_plot_point_verif <- function(harp_verif_input,
         
             verif_III <- harpPoint::filter_list(verif_II,
                                                 valid_hour == "All",
-                                                valid_dttm == "All")
+                                                !!sym(valid_dttm_col) == "All")
             
             if (c_ind) {
               cat("Plotting for xgroup:",xgroup,"\n")
@@ -1209,7 +1244,7 @@ fn_plot_point_verif <- function(harp_verif_input,
                 c_ind <- FALSE
               }
               
-              vhours <- base::intersect(allvalidh,c("00","12"))
+              vhours <- base::intersect(allvalidh,pr_validh)
 
               if (length(vhours) > 0) {
               for (vh in vhours) {

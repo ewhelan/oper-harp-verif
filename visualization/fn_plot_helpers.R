@@ -9,6 +9,94 @@
 numbers_only <- function(x) !grepl("\\D", x)
 
 #================================================#
+# GENERATE SCORECARD PLOTS
+#================================================#
+
+fn_gen_sc_plots <- function(verif,
+                            CONFIG,
+                            plot_output,
+                            verif_path,
+                            fsd,
+                            fed,
+                            png_projname = NA_character_,
+                            tile_lts = seq(0,66,3)) {
+  
+  model_names <- NULL
+  score_names <- NULL
+  for (ii in seq(1,length(verif))) {
+    if (length(verif[[ii]][["sc_data"]]) > 0) {
+      # First domain, first tibble (i.e. summary scores)
+      qwe         <- unique(verif[[ii]][["sc_data"]][[1]][[1]][["fcst_model"]])
+      qwe2        <- unique(verif[[ii]][["sc_data"]][[1]][[1]][["score"]])
+      model_names <- unique(c(model_names,qwe))
+      score_names <- unique(c(score_names,qwe2))
+    }
+  }
+  sc_models <- c(CONFIG$scorecards$ref_model,
+                 CONFIG$scorecards$fcst_model)
+  
+  # Check fcst/ref model consistency
+  for (ii in seq(1,length(sc_models))) {
+    scm <- sc_models[ii]
+    if (!(scm %in% model_names)) {
+      # Look for renamed version
+      if (any(grepl(scm,model_names,fixed = TRUE))) {
+        scm_renamed <- model_names[grepl(scm,model_names,fixed = TRUE)]
+        if (length(scm_renamed) == 1) {
+          cat("Using model name",scm_renamed,"instead of",scm,"\n")
+          sc_models[ii] <- scm_renamed
+        } else {
+          stop("Fringe case in scorecard model check, what's going on?")
+        }
+      } else {
+        stop("Model ",scm," was not found in scorecard data, aborting!")
+      }
+    }
+  }
+  
+  # Check score consistency
+  if (all(CONFIG$scorecards$scores %in% score_names)) {
+    sc_scores <- CONFIG$scorecards$scores
+  } else {
+    cat("Switch scorecard scores to default\n")
+    if ("mean_bias" %in% score_names) {
+      sc_scores <- c("mean_bias","rmse","crps","spread")
+    } else {
+      sc_scores <- c("bias","rmse","stde")
+    }
+  }
+  
+  scard_fname_out <- fn_scorecard_signif(verif,
+                                         sc_scores,
+                                         CONFIG$scorecards$parameters,
+                                         sc_models[2],
+                                         sc_models[1],
+                                         plot_output,
+                                         plot_signif = CONFIG$scorecards$plot_signif,
+                                         verif_path = verif_path,
+                                         png_projname = png_projname,
+                                         fsd  = fsd,
+                                         fed  = fed)
+  # Plot the "tile" scorecards
+  if (!is.na(scard_fname_out)) {
+    if (file.exists(scard_fname_out)) {
+      sc_data <- readRDS(scard_fname_out)
+      fn_plot_tile_scorecard(sc_data,
+                             sc_scores,
+                             sc_models[2],
+                             sc_models[1],
+                             plot_output,
+                             significance = 0.95,
+                             png_projname = png_projname,
+                             leadtimes = tile_lts,
+                             fsd  = fsd,
+                             fed  = fed)
+    }
+  }
+  
+}
+
+#================================================#
 # DROP VERIF ATTRIBUTES
 #================================================#
 
@@ -392,7 +480,7 @@ fn_plot_point <- function(verif,
   score_sep    <- fxoption_list$score_sep
   comp_val     <- fxoption_list$comp_val
   thr_brks     <- fxoption_list$thr_brks
-  
+  clim_name    <- fxoption_list$clim_name
   if (all(grepl("_scores",names(verif)))) {
     df <- verif[[paste0(c_ftyp,"_",c_typ,"_scores")]]
   } else {
@@ -429,6 +517,12 @@ fn_plot_point <- function(verif,
       mcolors <- mcolors[names(mcolors) != "OBS"]
       yl <- ""
     }
+  } else if (xgroup == "qobs") {
+    xl <- paste0("Sorted obs. (",par_unit,")")
+    yl <- paste0("Sorted forecasts (",par_unit,")")
+    stroke_size <- 0
+    point_size  <- 0
+    qobs_diag   <- TRUE
   }
   
   # A check on the type of xgroup (in case of character type for 
@@ -447,13 +541,34 @@ fn_plot_point <- function(verif,
   title_scores <- gsub("_"," ",stringr::str_to_title(title_scores)) 
   
   # Plot title
+  if (length(title_scores) == 1) {
+    if (title_scores == "Nfa") {
+      title_scores <- "Normalised Forecast Activity"
+    } else if (title_scores == "Msss") {
+      title_scores <- "Mean Squared Skill Score"
+      if (!is.null(clim_name)) {
+        subtitle_str <- paste0(subtitle_str," : Relative to ",clim_name)
+      }
+    } else if (title_scores == "Quant") {
+      title_scores <- "Quantile-Quantile"
+    } else if (title_scores == "Qdiff") {
+      title_scores <- "Quantile-Quantile difference"
+      yl <- paste0("Sorted forecasts - obs. (",par_unit,")")
+      qobs_diag <- FALSE
+    }
+  }
   ptitle <- paste0(paste0(title_scores,collapse = ", ")," : ",title_str)
   
   # Change point size if we are looking at valid_dttm
-  if (xgroup == "valid_dttm") {
+  if (xgroup %in% c("valid_dttm","valid_ymd")) {
     stroke_size <- 0
     point_size  <- 0
-    xl          <- "Valid date"
+    if (xgroup == "valid_dttm") {
+      xl       <- "Valid date"
+    } else if (xgroup == "valid_ymd") {
+      xl           <- "Valid day"
+      subtitle_str <- paste0(subtitle_str," : Data aggregated to daily temporal resolution")
+    }
   }
   
   # If looking at lead_time, use fixed y-limits if specified
@@ -530,7 +645,7 @@ fn_plot_point <- function(verif,
   } else if (any(grepl("mbr",all_scores))) {
     
     # If looking at valid_dttm, then use only one column
-    if (xgroup == "valid_dttm") {
+    if (xgroup %in% c("valid_dttm","valid_ymd")) {
       ncols = 1
     } else {
       ncols = min(num_models,2)
@@ -608,7 +723,7 @@ fn_plot_point <- function(verif,
       
     # Add zero line if relevant
     cp_ylim <- ggplot2::layer_scales(p_out)$y$range$range
-    if ((cp_ylim[1] < 0) && (cp_ylim[2] > 0)) {
+    if ((cp_ylim[1] < 0) && (cp_ylim[2] > 0) && (xgroup != "qobs")) {
       p_out <- p_out + ggplot2::geom_hline(yintercept = 0,
                                            linewidth  = line_size,
                                            color      = "black",
@@ -699,7 +814,7 @@ fn_plot_point <- function(verif,
     }
 
     cp_ylim <- layer_scales(p_out)$y$range$range
-    if ((cp_ylim[1] < 0) && (cp_ylim[2] > 0)) {
+    if ((cp_ylim[1] < 0) && (cp_ylim[2] > 0) && (xgroup != "qobs")) {
       p_out <- p_out + ggplot2::geom_hline(yintercept = 0,
                                           linewidth  = line_size,
                                           color      = "black",
@@ -716,6 +831,31 @@ fn_plot_point <- function(verif,
       p_out <- p_out + ggplot2::labs(
         subtitle = paste0(subtitle_str," (bins=(], min included, num obs > 0)")
       )
+    }
+    if (xgroup == "qobs") {
+      if (qobs_diag) {
+        cp_xlim <- layer_scales(p_out)$x$range$range
+        xy_min <- min(c(cp_xlim,cp_ylim))
+        xy_max <- max(c(cp_xlim,cp_ylim))
+        p_out <- p_out + ggplot2::geom_abline(intercept = 0,
+                                              slope     = 1,
+                                              color     = "black",
+                                              linewidth = 0.5) +
+          ggplot2::scale_x_continuous(limits = c(xy_min,xy_max)) +
+          ggplot2::scale_y_continuous(limits = c(xy_min,xy_max))
+      } else {
+        p_out <- p_out + ggplot2::geom_hline(yintercept = 0,
+                                             linewidth  = 0.5,
+                                             color      = "black")
+      }
+    }
+    if (length(all_scores) == 1) {
+      if (all_scores %in% c("nfa","msss")) {
+        p_out <- p_out + ggplot2::geom_hline(yintercept = 1,
+                                             linewidth  = line_size,
+                                             color      = "black",
+                                             linetype   = "dashed")
+      }
     }
     
     # Change to log axis for precip threshold scores, and add breaks
@@ -846,7 +986,7 @@ fn_plot_numcases <- function(verif,
   }
   
   # Reduce point size for timeseries plots
-  if (xgroup == "valid_dttm") {
+  if (xgroup %in% c("valid_dttm","valid_ymd")) {
     point_size <- 0
   }
   
@@ -1000,12 +1140,22 @@ fn_plot_map <- function(verif,
   score_sep  <- fxoption_list$score_sep
   param      <- fxoption_list$param
   map_cbar_d <- fxoption_list$map_cbar_d
-  if (score != "num_obs") {
-    df       <- verif[[paste0(c_ftyp,"_",c_typ,"_scores")]]
-  } else {
-    df       <- verif
+  geo_check  <- fxoption_list$geo_check
+  # Check for geolist
+  if (is.null(geo_check)) {
+    geo_check <- FALSE
   }
   
+  if (geo_check) {
+    df <- verif
+  } else {
+    if (score != "num_obs") {
+      df       <- verif[[paste0(c_ftyp,"_",c_typ,"_scores")]]
+    } else {
+      df       <- verif
+    }
+  }
+    
   # Split sscore into its individual parts
   all_scores   <- strsplit(score,score_sep)[[1]]
   num_scores   <- length(all_scores)
@@ -1019,34 +1169,50 @@ fn_plot_map <- function(verif,
   
   # In the map plotting it is assumed that the SID lat/lons are included in 
   # the verification object. Otherwise, nothing can be done
-  if ((all(c("lat","lon") %in% names(df))) & (num_scores == 1)) {
+  if (((all(c("lat","lon") %in% names(df))) & (num_scores == 1)) || (geo_check)) {
     
     # Colorbar options
-    c_min   <- min(df[[score]],na.rm = TRUE)
-    c_max   <- max(df[[score]],na.rm = TRUE)
-    min_lon <- min(df[["lon"]])
-    max_lon <- max(df[["lon"]])
-    min_lat <- min(df[["lat"]])
-    max_lat <- max(df[["lat"]])
-   
-    # If there is only one station, then skip!
-    if ( (min_lon == max_lon) & (min_lat == max_lat)) {
-	   warning("Skipping map plotting as only one SID found")
-	   return(NA_character_)
+    if (!geo_check) {
+      c_min   <- min(df[[score]],na.rm = TRUE)
+      c_max   <- max(df[[score]],na.rm = TRUE)
+      min_lon <- min(df[["lon"]])
+      max_lon <- max(df[["lon"]])
+      min_lat <- min(df[["lat"]])
+      max_lat <- max(df[["lat"]])
+     
+      # If there is only one station, then skip!
+      if ( (min_lon == max_lon) & (min_lat == max_lat)) {
+  	   warning("Skipping map plotting as only one SID found")
+  	   return(NA_character_)
+      }
+    } else {
+      c_min <- df[[score]] %>% unlist() %>% min()
+      c_max <- df[[score]] %>% unlist() %>% max()
     }
     
-    if (score == "num_obs") {
-      p_map <- df %>% ggplot2::ggplot(aes(lon,lat,
-                                          fill = .data[[score]]))
+    if (geo_check) {
+      geo_map <- get_map(df,col = {{score}}, polygon = T)
+      p_map   <- ggplot2::ggplot() +
+        harpVis::geom_georaster(aes(geofield = get(score)), df, na.rm = T) +
+        ggplot2::geom_polygon(
+          aes(x, y, group = group), geo_map, colour = "grey30", fill = "transparent"
+        ) 
     } else {
-      p_map <- df %>% ggplot2::ggplot(aes(lon,lat,
-                                          fill = .data[[score]],
-                                          size = abs(.data[[score]])))
+      if (score == "num_obs") {
+        p_map <- df %>% ggplot2::ggplot(aes(lon,lat,
+                                            fill = .data[[score]]))
+      } else {
+        p_map <- df %>% ggplot2::ggplot(aes(lon,lat,
+                                            fill = .data[[score]],
+                                            size = abs(.data[[score]])))
+      }
     }
     
     # Get the cmap and brks
-    cbar_opts <- fn_get_map_cbar(map_cbar_d,c_min,c_max,score,param,par_unit)
+    cbar_opts <- fn_get_map_cbar(map_cbar_d,c_min,c_max,score,param,par_unit,
+                                 geo_check = geo_check)
     
+    if (!geo_check){
     if (sf_available) {
       p_map <- p_map +
         ggplot2::geom_sf(data        = world,
@@ -1062,7 +1228,9 @@ fn_plot_map <- function(verif,
                               inherit.aes = FALSE)
     }
     p_map <- p_map +
-      ggplot2::geom_point(colour = 'grey40',pch = 21) + 
+      ggplot2::geom_point(colour = 'grey40',pch = 21)
+    }
+    p_map <- p_map +
       ggplot2::labs(title    = ptitle,
                     subtitle = subtitle_str,
                     fill     = "") +
@@ -1081,25 +1249,35 @@ fn_plot_map <- function(verif,
             legend.key.height         = unit(1.5,"cm"),
             strip.background          = ggplot2::element_rect(fill = "white"),
             strip.text                = ggplot2::element_text(size = 8))
-    if ((num_models > 1) && ("fcst_model" %in% names(df))) {
+    if (((num_models > 1) || (geo_check)) && ("fcst_model" %in% names(df))) {
       p_map <- p_map + 
         ggplot2::facet_wrap(
         vars(fcst_model),
         ncol = min(num_models,3))
     }
-    if (score != "num_obs") {
+    if ((score != "num_obs") && (!geo_check)) {
       p_map <- p_map +
         ggplot2::labs(size = "") +
         ggplot2::scale_size_continuous(range = c(0.1, 3)) + # Controls point size
         ggplot2::guides(size = "none") # Remove size label from legend
     }
       
+    if (!geo_check) {
     if (sf_available) {
       p_map <- p_map + ggplot2::coord_sf(xlim = c(min_lon-0.2,max_lon+0.2),
                                          ylim = c(min_lat-0.2,max_lat+0.2))
     } else {
       p_map <- p_map + ggplot2::coord_cartesian(xlim = c(min_lon-0.2,max_lon+0.2),
                                                 ylim = c(min_lat-0.2,max_lat+0.2))
+    }
+    } else {
+      p_map <- p_map + harpVis::theme_harp_map() +
+        ggplot2::theme(legend.key.height = unit(1.5,"cm"))
+      if (sf_available) {
+        p_map <- p_map + ggplot2::coord_sf(expand = FALSE)
+      } else {
+        p_map <- p_map + ggplot2::coord_cartesian(expand = FALSE)
+      }
     }
     
     if ((map_cbar_d) & (!is.null(cbar_opts$brks[1]))) {
@@ -1130,7 +1308,8 @@ fn_plot_map <- function(verif,
 # DEFINE THE COLOURBAR OPTIONS USED IN MAP PLOTTING
 #================================================#
 
-fn_get_map_cbar <- function(map_cbar_d,c_min,c_max,score,param,par_unit){
+fn_get_map_cbar <- function(map_cbar_d,c_min,c_max,score,param,par_unit,
+                            geo_check = FALSE){
   
   # Get breaks from this function
   gpc      <- get_param_classes(param,par_unit,score = score)
@@ -1156,7 +1335,11 @@ fn_get_map_cbar <- function(map_cbar_d,c_min,c_max,score,param,par_unit){
     scico_pal <- "vik"
     scico_dir <- 1
   } else {
-    scico_pal <-"lipari"
+    if (geo_check) {
+      scico_pal <- "lajolla"
+    } else {
+      scico_pal <-"lipari"
+    }
     scico_dir <- -1
   }
   cmap <- scico::scico(length(brks)-1,
@@ -1169,6 +1352,14 @@ fn_get_map_cbar <- function(map_cbar_d,c_min,c_max,score,param,par_unit){
                          begin     = 0.25,
                          end       = 0.75)
     cmap[length(brks)/2] <- "white"
+  }
+  if (geo_check) {
+    if (scico_pal == "vik") {
+      cmap[length(brks)/2] <- "white"
+    } else {
+      # Add white at bottom, drop the first colour
+      cmap <- c("white",cmap[2:length(cmap)])
+    }
   }
   
   # Then filter the cmap to just the colours which cover the range cmin-cmax
@@ -1584,11 +1775,37 @@ fn_aux <- function(fc,
       p_list[[length(p_list) + 1]] <- p[[1]]
       p_list[[length(p_list) + 1]] <- p[[2]]
     }
+    
+    # Quantile-quantile plots
+    vroption_list$xgroup <- "qobs"
+    vroption_list$score  <- paste0(cprefix,"quant")
+    vroption_list$xg_str <- "qobs"
+    p <- fn_quant(fc,
+                  title_str,
+                  subtitle_str,
+                  fxoption_list,
+                  vroption_list,
+                  use_parallel = use_parallel)
+    p_list[[length(p_list) + 1]] <- p
+    vroption_list$score  <- paste0(cprefix,"qdiff")
+    p <- fn_quant(fc,
+                  title_str,
+                  subtitle_str,
+                  fxoption_list,
+                  vroption_list,
+                  use_parallel = use_parallel)
+    p_list[[length(p_list) + 1]] <- p
+    
   }
   
   # Timeseries 
-  group_vars          <- c("fcst_model","valid_dttm")
-  vroption_list$xgroup <- "valid_dttm"
+  if ("valid_ymd" %in% names(fc)) {
+    group_vars           <- c("fcst_model","valid_ymd")
+    vroption_list$xgroup <- "valid_ymd"
+  } else {
+    group_vars           <- c("fcst_model","valid_dttm")
+    vroption_list$xgroup <- "valid_dttm"
+  }
   vroption_list$score  <- paste0(cprefix,"timeseries")
   vroption_list$xg_str <- "vd"
   p <- fn_dvar_ts(fc,
@@ -1712,6 +1929,194 @@ fn_dvar_ts <- function(fc,
                  "p_prof"    = FALSE)
   }
   return(p_info)
+}
+
+#================================================#
+# COMPUTE THE QUANTILE-QUANTILE PLOT
+#================================================#
+
+fn_quant <- function(fc,
+                     title_str,
+                     subtitle_str,
+                     fxoption_list,
+                     vroption_list,
+                     use_parallel = FALSE){
+  
+  # Read options
+  p_info     <- list()
+  score      <- vroption_list$score
+  station    <- vroption_list$station
+  score_orig <- score
+  if (grepl("mbr",score)) {
+    score <- gsub("mbr","",score)
+  }
+  
+  if (grepl("ctrl",score)) {
+    score               <- gsub("ctrl","",score)
+    vroption_list$score <- score
+  }
+  
+  # Get quants for each fcst_model
+  qq_inc  <- 0.01
+  qq_vals <- c(seq(qq_inc/10,2*qq_inc,qq_inc/10),
+               seq(2*qq_inc,1-2*qq_inc,qq_inc),
+               seq(1-2*qq_inc,1-(qq_inc/10),qq_inc/10)) %>% unique()
+  dv <- fc %>% 
+    dplyr::group_by(fcst_model) %>%
+    dplyr::reframe(quant = unname(quantile(fcst,qq_vals)))
+  # Get obs quants
+  dv_tmp <- fc %>% 
+    dplyr::filter(fcst_model == unique(fc$fcst_model)[1]) %>%
+    dplyr::group_by(fcst_model) %>%
+    dplyr::reframe(qobs = unname(quantile(OBS,qq_vals)))
+  dv$qobs <- rep(dv_tmp$qobs,length(unique(dv$fcst_model)))
+  # Also compute the diff in forecast and observed quant
+  dv <- dv %>%
+    dplyr::mutate(qdiff = quant - qobs)
+  
+  # Call plotting
+  if (!use_parallel) {
+    p_c <- fn_plot_point(dv,
+                         title_str,
+                         subtitle_str,
+                         fxoption_list,
+                         vroption_list)
+    
+    fn_save_png(p_c           = p_c,
+                fxoption_list = fxoption_list,
+                vroption_list = vroption_list,
+                fcst_type     = fxoption_list$c_ftyp,
+                score         = score_orig,
+                vlt           = vroption_list$lt_used)
+  } else {
+    p_info <- list("verif"     = dv,
+                   "title"     = title_str,
+                   "subtitle"  = subtitle_str,
+                   "vroptions" = vroption_list,
+                   "vlt"       = vroption_list$lt_used,
+                   "vth"       = "NA",
+                   "fcst_type" = fxoption_list$c_ftyp,
+                   "score"     = score_orig,
+                   "p_cases"   = FALSE,
+                   "p_map"     = FALSE,
+                   "p_prof"    = FALSE)
+  }
+  return(p_info)
+}
+
+#================================================#
+# COMPUTE THE NORMALISED FORECAST ACTVITY
+#================================================#
+
+fn_nfa <- function(fc,
+                   title_str,
+                   subtitle_str,
+                   fxoption_list,
+                   vroption_list,
+                   clim_name,
+                   vc = NA_character_){
+  
+  # Read options
+  p_info     <- list()
+  score      <- vroption_list$score
+  station    <- vroption_list$station
+  param      <- fxoption_list$param
+  score_orig <- score
+  if (grepl("mbr",score)) {
+    score <- gsub("mbr","",score)
+  }
+  if (grepl("ctrl",score)) {
+    score               <- gsub("ctrl","",score)
+    vroption_list$score <- score
+  }
+  
+  # Grab climatology from the dataset
+  clim_data  <- fc %>% 
+    dplyr::filter(fcst_model == clim_name) %>%
+    dplyr::mutate(clm = fcst) %>%
+    dplyr::select(-fcst,-fcst_model)
+  model_data <- fc %>% dplyr::filter(fcst_model != clim_name)
+  
+  # Merge climatology data into model data
+  model_data <- dplyr::inner_join(
+    model_data,
+    clim_data,
+    relationship = "many-to-one",
+    by = setdiff(colnames(clim_data),"clm")
+  )
+  
+  # Then compute the forecast activity. Need to be careful with vc
+  cols_to_grp <- c("fcst_model","lead_time")
+  ua_units    <- ""
+  if (!is.na(vc)) {
+    if (vc == "pressure") {
+      cols_to_grp <- c(cols_to_grp,"p")
+      ua_units    <- "hPa"
+    } else if (vc == "height") {
+      cols_to_grp <- c(cols_to_grp,"z")
+      ua_units    <- "m" # ??? assumed!
+    }
+  }
+  fc_act <- model_data %>% 
+    dplyr::group_by_at(cols_to_grp) %>%
+    dplyr::summarise(fcact = sd(fcst - clm),
+                     num_cases = n())
+  # And the observation activity (repeat over fcst_model for future merging)
+  ob_act <- model_data %>% 
+    dplyr::group_by_at(cols_to_grp) %>%
+    dplyr::summarise(obact = sd(OBS - clm),
+                     num_cases = n())
+  # Then the NFA
+  fc_act <- dplyr::inner_join(fc_act,
+                              ob_act,
+                              relationship="one-to-one",
+                              by = setdiff(colnames(ob_act),c("fcact","obact"))) %>%
+    dplyr::mutate(nfa = fcact/obact)
+
+  subtitle_str <- paste0(subtitle_str," : Relative to ",clim_name)
+  if ("p" %in% colnames(fc_act)) {
+    fc_act$iter <- fc_act$p
+  } else if ("z" %in% colnames(fc_act)) {
+    fc_act$iter <- fc_act$z
+  } else {
+    fc_act$iter <- -99 # dummy
+  }
+  iter_lvls <- unique(fc_act$iter)
+  
+  # Call plotting
+  for (iter_lvl in iter_lvls) {
+    
+    c_title_str <- title_str
+    if (iter_lvl >= 0) {
+      c_title_str  <- gsub(paste0(stringr::str_to_title(param)," : "),
+                           paste0(stringr::str_to_title(param),iter_lvl,ua_units," : "),
+                           c_title_str)
+      iter_lvl_png <- iter_lvl
+    } else {
+      iter_lvl_png <- "NA"
+    }
+  
+    p_c <- fn_plot_point(fc_act %>% dplyr::filter(iter == iter_lvl),
+                         c_title_str,
+                         subtitle_str,
+                         fxoption_list,
+                         vroption_list)
+    p_nc <- fn_plot_numcases(fc_act %>% dplyr::filter(iter == iter_lvl),
+                             fxoption_list,
+                             vroption_list)
+    p_c  <- fn_nc_combine(p_c,p_nc)
+    
+    fn_save_png(p_c           = p_c,
+                fxoption_list = fxoption_list,
+                vroption_list = vroption_list,
+                fcst_type     = fxoption_list$c_ftyp,
+                score         = score_orig,
+                vlt           = iter_lvl_png)
+    
+  }
+    
+  return(p_info)
+  
 }
 
 #================================================#
@@ -2036,7 +2441,7 @@ get_param_classes <- function(param,par_unit,score = "freq") {
                 "log_ind"  = FALSE))
   }
   
-  if (param %in% c("Pmsl")) {
+  if (param %in% c("Pmsl","msl")) {
     
     # Assuming hPa as default
     if (score %in% c("bias","mean_bias")) {
@@ -2058,7 +2463,7 @@ get_param_classes <- function(param,par_unit,score = "freq") {
       scale_round <- 0
     }
     
-  } else if (param %in% c("Ps")) {
+  } else if (param %in% c("Ps","sp")) {
     
     # Assuming hPa as default
     if (score %in% c("bias","mean_bias")) {
@@ -2080,10 +2485,30 @@ get_param_classes <- function(param,par_unit,score = "freq") {
       scale_round <- 0
     }
     
-  } else if ((param %in% c("T2m","Td2m","Tmax","Tmin")) || 
+  } else if ((gsub('[0-9]+$','',param) == "Z") ||
+             (gsub('[0-9]+$','',param) == "z")) {
+    
+    # Assuming m as default
+    if (score %in% c("bias","mean_bias")) {
+      brks <- seq(-30,-2.5,2.5)
+      brks <- c(brks,-1,1,-rev(brks))
+    } else if (score == "freq") {
+      brks <- seq(0,25000,100)
+    } else {
+      brks <- seq(0,40,2.5)
+    }
+    
+    if (par_unit %in% c("m")) {
+      scale_fac   <- 1
+      scale_mult  <- T
+      scale_round <- 0
+    }
+    
+  } else if ((param %in% c("T2m","Td2m","Tmax","Tmin","2t","t2m","skt")) || 
              (grepl("T2m",param,fixed=TRUE)) || 
              (gsub('[0-9]+$','',param) == "T") ||
-             (gsub('[0-9]+$','',param) == "Td")) {
+             (gsub('[0-9]+$','',param) == "Td") || 
+             (gsub('[0-9]+$','',param) == "t")) {
     
     # Assuming degC as default
     if (score %in% c("bias","mean_bias")) {
@@ -2134,9 +2559,10 @@ get_param_classes <- function(param,par_unit,score = "freq") {
       scale_round <- 4
     }
     
-  } else if ((param %in% c("S10m","Gmax","Smax","G10m")) ||
+  } else if ((param %in% c("S10m","Gmax","Smax","G10m","10u","10v","ws10m")) ||
              (grepl("S10m",param,fixed=TRUE)) ||
-             (gsub('[0-9]+$','',param) == "S")) {
+             (gsub('[0-9]+$','',param) == "S") || 
+             (gsub('[0-9]+$','',param) == "ws")) {
     
     # Assuming m/s as default
     if (score %in% c("bias","mean_bias")) {
@@ -2276,7 +2702,7 @@ get_param_classes <- function(param,par_unit,score = "freq") {
       scale_round <- 2
     }
     
-  } else if (grepl("Pcp",param,fixed=T)) {
+  } else if ((grepl("Pcp",param,fixed=T)) || (param %in% c("tp"))) {
     
     # Assuming mm/acc period (kg/m^2)
     if (score %in% c("bias","mean_bias")) {
@@ -2382,7 +2808,7 @@ fn_scatterplot <- function(fc,
       ggplot2::facet_wrap(vars((fcst_model)),
                           ncol = min(fxoption_list$num_models,3))
     max_count <- max(ggplot2::ggplot_build(p_scat)$data[[1]]$count)
-    br1       <- unique(round(logseq(1,max_count,5),0))
+    br1       <- unique(round(pracma::logseq(1,max_count,5),0))
     
     oto_col <- "black"
     if (fxoption_list$cmap_hex == "paired") {
@@ -2575,7 +3001,7 @@ fn_gen_model_colors <- function(in_names,
   # known models is pointless, and we return from here.
   if (is.null(model_colors)) {
     warning(cmap," does not have enough colours/is not in RColorBrewer or pals. As such known models will be ignored.")
-    cat("Using R's defualt line colors")
+    cat("Using R's default line colors\n")
     model_colors <- scales::hue_pal()(length(in_names))
     if (withobs) {
       model_colors <- c(model_colors,'#4F4F4F')

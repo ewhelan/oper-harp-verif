@@ -197,7 +197,7 @@ source(here::here(params_file))
 
 cat("%%%%%%%%% point_verif: Using config file",config_file,"and parameter file",params_file,"%%%%%%%%%\n")
 
-CONFIG          <- yaml::yaml.load_file(here::here(config_file))
+CONFIG          <- load_config(here::here(config_file))
 project_name    <- check_config_input(CONFIG,"verif","project_name")
 fcst_model      <- check_config_input(CONFIG,"verif","fcst_model")
 lead_time_str   <- check_config_input(CONFIG,"verif","lead_time")
@@ -211,7 +211,21 @@ model_as_obs    <- check_config_input(CONFIG,"verif","model_as_obs",default=FALS
 if (!isFALSE(model_as_obs)) {
   model_as_obs_name <- check_config_input(CONFIG,"verif","model_as_obs",z="model_as_obs_name")
   model_as_obs_path <- check_config_input(CONFIG,"verif","model_as_obs",z="model_as_obs_path")
+  model_as_obs_by   <- check_config_input(CONFIG,"verif","model_as_obs",z="model_as_obs_by",default = "1h")
   model_as_obs_tmpl <- check_config_input(CONFIG,"verif","model_as_obs",z="model_as_obs_tmpl",default = "fctable")
+}
+use_climatology <- check_config_input(CONFIG,"verif","use_climatology",default=FALSE)
+if (!isFALSE(use_climatology)) {
+  climatology_name <- check_config_input(CONFIG,"verif","use_climatology",z="climatology_name")
+  climatology_path <- check_config_input(CONFIG,"verif","use_climatology",z="climatology_path")
+  climatology_year <- check_config_input(CONFIG,"verif","use_climatology",z="climatology_year")
+  climatology_by   <- check_config_input(CONFIG,"verif","use_climatology",z="climatology_by",default = "1h")
+  climatology_tmpl <- check_config_input(CONFIG,"verif","use_climatology",z="climatology_tmpl",default = "fctable")
+  clim_in_plots    <- check_config_input(CONFIG,"verif","use_climatology",z="clim_in_plots",default = FALSE)
+  use_climatology  <- TRUE
+} else {
+  climatology_name <- NULL
+  clim_in_plots    <- FALSE
 }
 verif_path      <- check_config_input(CONFIG,"verif","verif_path")
 domains         <- check_config_input(CONFIG,"verif","domains",default="All")
@@ -225,6 +239,7 @@ ua_fcst_cycle   <- check_config_input(CONFIG,"verif","ua_fcst_cycle",default=F)
 ua_restrict_vh  <- check_config_input(CONFIG,"verif","ua_restrict_vh",default=T)
 lt_split        <- check_config_input(CONFIG,"verif","lt_split",default=F)
 force_valid_thr <- check_config_input(CONFIG,"verif","force_valid_thr",default=F)
+skip_qc         <- check_config_input(CONFIG,"verif","skip_qc",default=F)
 plot_output     <- check_config_input(CONFIG,"post","plot_output",default="default")
 create_png      <- check_config_input(CONFIG,"post","create_png",default=T)
 use_parallel    <- check_config_input(CONFIG,"post","use_parallel",default=F)
@@ -240,17 +255,20 @@ create_scrd     <- check_config_input(CONFIG,"scorecards","create_scrd",default=
 members_list    <- get_named_list(members,fcst_model,"members")
 lags_list       <- get_named_list(lags,fcst_model,"lags")
 shifts_list     <- get_named_list(shifts,fcst_model,"shifts")
-file_template   <- get_named_list(file_template,fcst_model,"file_template")
+file_template   <- get_named_list(file_template,fcst_model,"file_template",skip_parse=T)
 
 # Abort if directories do not exist
 check_dirs_exist(c(fcst_path,obs_path,verif_path))
 
-if ((!dir.exists(plot_output)) & (plot_output != "default")) {
+if ((!dir.exists(plot_output)) && (!(plot_output %in% c("default","png")))) {
   stop(plot_output," does not exist")
 }
 
-if (plot_output == "default") {
-  plot_output   <- file.path(verif_path,"archive")
+if (plot_output %in% c("default","png")) {
+  dstr <- switch(plot_output,
+                 "default" = "archive",
+                 "png"     = "png")
+  plot_output   <- file.path(verif_path,dstr)
   if (!dir.exists(plot_output)) {
     dir.create(plot_output,showWarnings = TRUE,recursive = FALSE)
   }
@@ -330,61 +348,9 @@ missing_data <- list("verif"   = NA_character_,
 if (params_list == "ALL") {
   cat("Verify all parameters in",params_file," (this is NOT recommended!)\n")
 } else {
-  # Get rid of whitespace and split into parameters
-  params_list <- stringr::str_split_1(gsub(" ","",params_list),",") %>% unique()
-  # Allow for single UA levels by splitting params_list into standard (i.e. 
-  # appearing explicitly in set_params file) and other parts
-  params_list_standard  <- params_list[params_list %in% names(params)]
-  params_list_UA_levels <- setdiff(params_list,params_list_standard)
-  # First get the standard params
-  params_orig <- params
-  params      <- params[params_list_standard]
-  # Remove empty entries
-  params      <- params[lapply(params,length) > 0]
-  # Save the first parameter found to use with create_station_filter
-  if (length(names(params)) > 0) {
-    param_csf <- names(params)[1]
-  } else {
-    param_csf <- NULL
-  }
-
-  # Then handle single UA_levels e.g. T925
-  if (length(params_list_UA_levels) > 0) {
-    for (ual in params_list_UA_levels) {
-      # Strip trailing level from ual
-      uav <- gsub('[0-9]+$','',ual)
-      # Does the corresponding UA variable exist in the params file?
-      if (uav %in% names(params_orig)) {
-        param_ual <- params_orig[uav]
-        names(param_ual) <- ual
-        # Remove vc if it exists
-        if (!is.null(param_ual[[ual]][["vc"]])) {
-          param_ual[[ual]][["vc"]] <- NULL
-        }
-        params <- c(params,param_ual)
-        # If param_csf is not set, do so here (to the uav value!)
-        if (is.null(param_csf)) {
-          param_csf <- uav
-        }
-      } else {
-        cat("Did not find any match for",ual,"in the parameter file\n")
-      }
-    }
-  }
-  # Check that all entries are unique
-  if ((length(names(params))) != (length(unique(names(params))))) {
-    stop("There are repeated entries in params - why did this happen?")
-  }
-  
-  # Remove empty entries
-  params      <- params[lapply(params,length) > 0]
-  if (length(params) == 0) {
-    cat("Could not find any of the parameters:",
-        paste(params_list,collapse = ","),"\n")
-    stop("No parameters found!")
-  } else {
-    cat("Running for parameter(s):",paste(names(params),collapse = ","),"\n")
-  }
+  pt        <- parse_input_params(params_list,params)
+  params    <- pt$params
+  param_csf <- pt$param_csf
 }
 
 # Make the grps for different verification types
@@ -400,6 +366,17 @@ grps_surface_default <- grps_surface_default[grepl("station_group",
                                              grps_surface_default,fixed = TRUE)]
 grps_UA_default      <- grps_UA_default[grepl("station_group",
                                              grps_UA_default,fixed = TRUE)]
+
+# Change valid_dttm grouping if you are looking at a longer period of time
+valid_dttm_col <- "valid_dttm"
+if (num_days > 100) {
+  cat("Aggregating data to daily scores for timeseries plots as you are looking at many days!\n")
+  valid_dttm_col <- "valid_ymd"
+  grps_surface_default <- lapply(grps_surface_default, function(x) {
+    x[x == "valid_dttm"] <- "valid_ymd"
+    x
+  })
+}
 
 # Convert num_ref_members to Inf if required
 if (!is.na(num_ref_members)) {
@@ -681,6 +658,96 @@ run_verif <- function(prm_info, prm_name) {
   }
   
   #================================================#
+  # ADD IN THE CLIMATOLOGY AS A MODEL
+  #================================================#
+  use_climatology_local <- use_climatology
+  climatology_name_local <- climatology_name
+  
+  if (use_climatology) {
+    
+    cat("Now add in climatology from model",climatology_name,"\n")
+    
+    if (fcst_type != "det") {
+      stop("Climatology option only working in determinstic mode so far!")
+    }
+    
+    # Valid days to grab
+    clim_days <- fcst[[1]]$valid_dttm %>% 
+      unique() %>%
+      harpCore::as_ymdh() %>%
+      sort() %>% 
+      substr(.,5,10)
+    clim_sdat <- paste0(climatology_year,min(clim_days))
+    clim_edat <- paste0(climatology_year,max(clim_days))
+    
+    # Then read in climatology data
+    clm_prm_name <- prm_name
+    if (grepl("AccPcp",prm_name,fixed = T)) {
+      clm_prm_name <- paste0("analysis_",clm_prm_name)
+    }
+    mm        <- list(NULL)
+    names(mm) <- climatology_name
+    lm        <- list("0h")
+    names(lm) <- climatology_name
+    clim_data <- try_rpforecast(clim_sdat,
+                                clim_edat,
+                                climatology_by,
+                                climatology_name,
+                                fcst_type,
+                                clm_prm_name,
+                                0,
+                                mm,
+                                lm,
+                                climatology_path,
+                                climatology_tmpl,
+                                stations_filter,
+                                vertical_coordinate)
+    if (is.null(clim_data)) {
+      
+      message("Failure during the climatology FCTABLE reading process for ",prm_name,
+              ", not using climatology for this parameter!")
+      use_climatology_local <- FALSE
+      climatology_name_local <- NULL
+      
+    } else {
+    
+      # Then filter to just month, day, hour, SID
+      cols_to_sel <- c("valid_dttm","SID","fcst")
+      cols_to_sel <- switch(
+        vertical_coordinate,
+        "pressure" = c(cols_to_sel,"p"),
+        "height"   = c(cols_to_sel,"z"),
+        cols_to_sel
+      )
+      clim_data <- clim_data %>% 
+        dplyr::select(all_of(cols_to_sel)) %>% 
+        dplyr::rename(clm = fcst) %>%
+        harpCore::expand_date(.,"valid_dttm") %>%
+        dplyr::select(-valid_dttm,-valid_year)
+      
+      # Make a fake forecast model based on first model and use it for climatology
+      qwe <- fcst[[1]] %>% 
+        harpCore::expand_date(.,"valid_dttm") %>%
+        dplyr::select(-valid_year)
+      # If multiple years are present the same day may be matched multiple times, 
+      # hence many-to-one. Then replace forecast by climatology values.
+      qwe2 <- dplyr::inner_join(qwe,
+                                clim_data[[1]],
+                                relationship = "many-to-one",
+                                by = setdiff(colnames(clim_data[[1]]),"clm")) %>%
+        dplyr::mutate(fcst_model = climatology_name,fcst = clm) %>%
+        dplyr::select(-clm,-valid_month,-valid_day,-valid_hour,-valid_minute)
+      clim_data[[1]] <- qwe2
+      # Then add this in to forecast model object
+      fcst <- c(fcst,clim_data)
+      
+      cat("Added climatology successfully!\n")
+      
+    }
+    
+  }
+  
+  #================================================#
   # COMMON CASE, SCALE, FILTER TO MAX FORECAST
   #================================================#
 
@@ -756,12 +823,18 @@ run_verif <- function(prm_info, prm_name) {
     names(mm) <- model_as_obs_name
     lm        <- list("0h")
     names(lm) <- model_as_obs_name
+    if (grepl("AccPcp",prm_name,fixed = T)) {
+      obs_prm_name <- paste0("analysis_",prm_name)
+    } else {
+      obs_prm_name <- prm_name
+    }
+    cat("Using parameter name",obs_prm_name,"when reading lead_time=0 forecasts\n")
     obs <- try_rpforecast(all_valid[1],
                           tail(all_valid,1),
-                          "1h",
+                          model_as_obs_by,
                           model_as_obs_name,
                           fcst_type,
-                          prm_name,
+                          obs_prm_name,
                           0,
                           mm,
                           lm,
@@ -774,6 +847,14 @@ run_verif <- function(prm_info, prm_name) {
       message("Failure during the FCTABLE reading process for ",prm_name,
               ", moving on to the next parameter")
       return(missing_data)
+    }
+    
+    if (unique(obs[[1]]$parameter) != prm_name) {
+      if ((unique(obs[[1]]$parameter) == obs_prm_name) && (grepl("AccPcp",obs_prm_name,fixed = T))) {
+        obs[[1]]$parameter <- "Pcp"
+      } else {
+        stop("Something weird happened with the parameter name when reading forecasts as obs")
+      }
     }
     
     # Now scale and drop columns
@@ -825,7 +906,9 @@ run_verif <- function(prm_info, prm_name) {
                   {{prm_name}},
                   prm_info,
                   vertical_coordinate,
-                  num_days)
+                  num_days,
+                  model_as_obs,
+                  skip_qc = skip_qc)
   if (is.null(fcst)) {
     message("Failure after the QC check for parameter ",prm_name,
             ", moving on to next parameter")
@@ -849,6 +932,10 @@ run_verif <- function(prm_info, prm_name) {
   fcst <- harpCore::expand_date(fcst,valid_dttm)
   fcst <- harpPoint::mutate_list(fcst,
                                  valid_hour = sprintf("%02d",valid_hour))
+  if (valid_dttm_col == "valid_ymd" ){
+    fcst <- harpPoint::mutate_list(fcst,
+                                   valid_ymd = as.Date(valid_dttm))
+  }
   
   # If UA variable, restrict to main valid hours i.e. 00, 06, 12, 18 Z
   if (!is.na(vertical_coordinate)) {
@@ -1004,7 +1091,7 @@ run_verif <- function(prm_info, prm_name) {
     #================================================#
     
     st_aux <- Sys.time()
-    if (is.na(vertical_coordinate) & (create_png) & (!skip_aux_plots)) {
+    if ((create_png) & (!skip_aux_plots)) {
       fn_plot_aux_scores(fcst,
                               plot_output,
                               png_projname  = png_projname,
@@ -1014,7 +1101,10 @@ run_verif <- function(prm_info, prm_name) {
                               lt_split      = lt_split,
                               fsd           = fsd,
                               fed           = fed,
-                              use_parallel  = use_parallel)
+                              use_parallel  = use_parallel,
+                              vc            = vertical_coordinate,
+                              clim_name     = climatology_name_local,
+                              clim_in_plots = clim_in_plots)
     }
     et_aux <- Sys.time()
     dt_aux <- round(as.numeric(et_aux - st_aux,units = "secs"))
@@ -1044,6 +1134,43 @@ run_verif <- function(prm_info, prm_name) {
     verif_toplot <- verif_all$verif_toplot
     verif_sid    <- verif_all$verif_sid
     
+    # If climatology is available, compute some skill scores relative to this
+    if (use_climatology_local) {
+      
+      if (fcst_type == "det") {
+        verif_toplot[[1]] <- verif_toplot[[1]] %>% 
+          dplyr::mutate(mse = (rmse)**2)
+        verif_ss_clim <- verif_toplot[[1]] %>%
+          dplyr::filter(fcst_model == climatology_name) %>%
+          dplyr::mutate(mse_clm = mse) %>%
+          dplyr::select(-fcst_model,-bias,-rmse,-mae,-stde,-mse)
+        if ("mean_fcst" %in% colnames(verif_ss_clim)) {
+          verif_ss_clim <- verif_ss_clim %>% dplyr::select(-mean_fcst,-mean_obs)
+        }
+        cnames = setdiff(intersect(colnames(verif_ss_clim),
+                                   colnames(verif_toplot[[1]])),
+                         c("fcst_model","mse_clm"))
+        verif_toplot[[1]] <- dplyr::inner_join(
+          verif_toplot[[1]],
+          verif_ss_clim,
+          relationship = "many-to-one",
+          by = cnames
+        ) %>%
+          dplyr::mutate(msss = 1 - (mse/mse_clm))
+      }
+      
+      # Then remove climatology from plotting if desired
+      if (!clim_in_plots) {
+        verif_toplot <- verif_toplot %>%
+          harpPoint::filter_list(fcst_model != climatology_name)
+        if ((is.na(vertical_coordinate)) & (!is.null(verif_sid))) {
+          verif_sid    <- verif_sid %>%
+            harpPoint::filter_list(fcst_model != climatology_name)
+        }
+      }
+      
+    }
+    
     #================================================#
     # CALL PLOTTING SCRIPT FOR DIFFERENT GROUPS
     #================================================#
@@ -1067,6 +1194,7 @@ run_verif <- function(prm_info, prm_name) {
       
       fn_plot_point_verif(verif_toplot,
                                plot_output,
+                               valid_dttm_col = valid_dttm_col,
                                png_projname  = png_projname,
                                rolling_verif = rolling_verif,
                                cmap          = cmap,
@@ -1075,6 +1203,7 @@ run_verif <- function(prm_info, prm_name) {
                                fed           = fed,
                                n_stations    = n_stations,
                                use_parallel  = use_parallel,
+                               clim_name     = climatology_name_local,
                                plot_num_obs  = TRUE,
                                fcst          = fcst)
       if ((is.na(vertical_coordinate)) & (!is.null(verif_sid))) {
@@ -1090,21 +1219,13 @@ run_verif <- function(prm_info, prm_name) {
                                  n_stations    = n_stations,
                                  use_parallel  = use_parallel)
         # Save the verification object used for SIDs if desired
-        if (save_sidrds) {
+        if ((save_sidrds) && (!rolling_verif)) {
           sidname <- paste(project_name,prm_name,"SID",start_date,end_date,sep = "_")
           saveRDS(object = verif_sid,
                   file   = file.path(plot_output,
                                      paste0(sidname,".rds")))
         }
       }
-    }
-    
-    # Save the verification object used for plotting pngs if desired
-    if (save_vofp) {
-      vtpname <- paste(project_name,prm_name,start_date,end_date,sep = "_")
-      saveRDS(object = verif_toplot,
-              file   = file.path(plot_output,
-                                 paste0(vtpname,".rds")))
     }
     
     et_plot <- Sys.time()
@@ -1131,6 +1252,15 @@ run_verif <- function(prm_info, prm_name) {
         harpIO::save_point_verif(verif,
                                  verif_path = verif_path)
       }
+      
+      # Save the verification object used for plotting pngs if desired
+      if (save_vofp) {
+        vtpname <- paste(project_name,prm_name,start_date,end_date,sep = "_")
+        saveRDS(object = verif_toplot,
+                file   = file.path(plot_output,
+                                   paste0(vtpname,".rds")))
+      }
+      
     }
         
   } else { # if gen_sc_only=TRUE
@@ -1205,78 +1335,15 @@ for (jj in names(params)) {
 # Generate scorecards/diffs if desired
 if ((create_scrd) & (sc_data_exists)) {
   
-  model_names <- NULL
-  score_names <- NULL
-  for (ii in seq(1,length(verif))) {
-    if (length(verif[[ii]][["sc_data"]]) > 0) {
-      # First domain, first tibble (i.e. summary scores)
-      qwe         <- unique(verif[[ii]][["sc_data"]][[1]][[1]][["fcst_model"]])
-      qwe2        <- unique(verif[[ii]][["sc_data"]][[1]][[1]][["score"]])
-      model_names <- unique(c(model_names,qwe))
-      score_names <- unique(c(score_names,qwe2))
-    }
-  }
-  sc_models <- c(CONFIG$scorecards$ref_model,
-                 CONFIG$scorecards$fcst_model)
+  fn_gen_sc_plots(verif,
+                  CONFIG,
+                  plot_output,
+                  verif_path,
+                  fsd,
+                  fed,
+                  png_projname = png_projname,
+                  tile_lts = seq(0,66,3))
   
-  # Check fcst/ref model consistency
-  for (ii in seq(1,length(sc_models))) {
-    scm <- sc_models[ii]
-    if (!(scm %in% model_names)) {
-      # Look for renamed version
-      if (any(grepl(scm,model_names,fixed = TRUE))) {
-        scm_renamed <- model_names[grepl(scm,model_names,fixed = TRUE)]
-        if (length(scm_renamed) == 1) {
-          cat("Using model name",scm_renamed,"instead of",scm,"\n")
-          sc_models[ii] <- scm_renamed
-        } else {
-          stop("Fringe case in scorecard model check, what's going on?")
-        }
-      } else {
-        stop("Model ",scm," was not found in scorecard data, aborting!")
-      }
-    }
-  }
-  
-  # Check score consistency
-  if (all(CONFIG$scorecards$scores %in% score_names)) {
-    sc_scores <- CONFIG$scorecards$scores
-  } else {
-    cat("Switch scorecard scores to default\n")
-    if ("mean_bias" %in% score_names) {
-      sc_scores <- c("mean_bias","rmse","crps","spread")
-    } else {
-      sc_scores <- c("bias","rmse","stde")
-    }
-  }
-  
-  scard_fname_out <- fn_scorecard_signif(verif,
-                                              sc_scores,
-                                              CONFIG$scorecards$parameters,
-                                              sc_models[2],
-                                              sc_models[1],
-                                              plot_output,
-                                              plot_signif = CONFIG$scorecards$plot_signif,
-                                              verif_path = verif_path,
-                                              png_projname = png_projname,
-                                              fsd  = fsd,
-                                              fed  = fed)
-  # Plot the "tile" scorecards
-  if (!is.na(scard_fname_out)) {
-    if (file.exists(scard_fname_out)) {
-      sc_data <- readRDS(scard_fname_out)
-      fn_plot_tile_scorecard(sc_data,
-                             sc_scores,
-                             sc_models[2],
-                             sc_models[1],
-                             plot_output,
-                             significance = 0.95,
-                             png_projname = png_projname,
-                             leadtimes = seq(0,66,3),
-                             fsd  = fsd,
-                             fed  = fed)
-    }
-  }
 }
 
 cat("%%%%%%%%%%%% point_verif: Finished config file",config_file,"%%%%%%%%%%%%\n")

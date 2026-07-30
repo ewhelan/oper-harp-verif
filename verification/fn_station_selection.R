@@ -151,8 +151,8 @@ fn_station_selection <- function(domain_choice = "All_Domains",
   # is used to generate lists based on SID ranges. 
   # latlon_reserved_names are used to generate lists defined by lat/lon
   # bounding boxes, while poly_reserved_names looks for .poly files
-  latlon_reserved_names <- c("DINI","IE_EN","IS","NL","NL_OP","DK","IRL","SCD",
-                             "FR","DE","Alps")
+  latlon_reserved_names <- c("DINI","IE_EN","IS","NL","NL_OP","DK","IRL","IoI",
+                             "SCD","FR","DE","Alps")
   synop_reserved_names  <- paste0(c("France","Germany","Ireland","Norway",
                                     "Sweden","Finland","Iceland","Greenland",
                                     "Denmark","Netherlands","Spain",
@@ -1279,6 +1279,11 @@ define_latlonbounds <- function(domain){
     wlon <- -11
     nlat <- 55.5
     elon <- -6
+  } else if (domain == "IoI") {
+    slat <- 51.25
+    wlon <- -10.25
+    nlat <- 55.5
+    elon <- -5.75
   } else if (domain == "SCD") { # Scandinavia bounding box
     slat <- 55
     wlon <- 4.5 
